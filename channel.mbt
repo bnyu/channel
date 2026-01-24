@@ -1,18 +1,26 @@
 ///|
+/// Suspend the current async task and register callbacks until `ok_cont` or
+/// `err_cont` is triggered.
+///
+/// - `cb` receives two callbacks: success and error.
+/// - When the error callback is invoked, the task raises `E`.
 async fn[T, E : Error] async_suspend(
   cb : ((T) -> Unit, (E) -> Unit) -> Unit,
 ) -> T raise E = "%async.suspend"
 
 ///|
+/// Schedule and run a non-throwing async task on the runtime.
 fn run_async(f : async () -> Unit noraise) = "%async.run"
 
 ///|
+/// A coroutine node in the receive wait list.
 priv struct RecvWaitCoro[T] {
   ok_cont : async (T) -> Unit noraise
   err_cont : (ChannelClosedError) -> Unit
 }
 
 ///|
+/// A coroutine node in the send wait list.
 priv struct SendWaitCoro[T] {
   item : T
   ok_cont : async () -> Unit noraise
@@ -20,15 +28,23 @@ priv struct SendWaitCoro[T] {
 }
 
 ///|
+/// Alias for the receive wait list.
 type RecvWaitList[T] = LinkList[RecvWaitCoro[T]]
 
 ///|
+/// Alias for the send wait list.
 type SendWaitList[T] = LinkList[SendWaitCoro[T]]
 
 ///|
+/// An async channel that supports bounded/unbounded buffering.
+///
+/// - `capacity = -1` means unbounded.
+/// - `capacity >= 0` means bounded.
+/// - Bounded channel use a ring buffer.
+/// - Unbounded channel use a linked list.
 struct Channel[T] {
-  unbounded : LinkList[T]?
-  buffer : Array[T?]
+  unbounded : LinkList[T]? // only for unbounded channel
+  buffer : Array[T?] // only for bounded channel
   capacity : Int
   mut size : Int
   mut recv_index : Int
@@ -39,21 +55,28 @@ struct Channel[T] {
 }
 
 ///|
+/// Error raised when the channel is closed.
 pub suberror ChannelClosedError derive(Show)
 
 ///|
+/// Error type for `try_send`.
 pub enum TrySendError {
   Closed(ChannelClosedError)
   Full
 } derive(Show)
 
 ///|
+/// Error type for `try_receive`.
 pub enum TryRecvError {
   Closed(ChannelClosedError)
   Empty
 } derive(Show)
 
 ///|
+/// Create a channel.
+///
+/// - `capacity = -1`: unbounded channel.
+/// - `capacity >= 0`: bounded channel (0 means unbuffered).
 pub fn[T] Channel::new(capacity? : Int = 0) -> Channel[T] {
   match capacity {
     -1 => Channel::unbound()
@@ -63,6 +86,9 @@ pub fn[T] Channel::new(capacity? : Int = 0) -> Channel[T] {
 }
 
 ///|
+/// Create a bounded channel.
+///
+/// `capacity` must be non-negative, otherwise it panics.
 pub fn[T] Channel::bound(capacity : Int) -> Channel[T] {
   if capacity < 0 {
     panic()
@@ -81,6 +107,8 @@ pub fn[T] Channel::bound(capacity : Int) -> Channel[T] {
 }
 
 ///|
+/// Create an unbounded channel.
+/// Send to an unbounded channel will never blocks.
 pub fn[T] Channel::unbound() -> Channel[T] {
   {
     buffer: Array::make(0, None),
@@ -96,6 +124,7 @@ pub fn[T] Channel::unbound() -> Channel[T] {
 }
 
 ///|
+/// Dequeue one element from the unbounded list.
 fn[T] Channel::dequeue_list(chan : Channel[T]) -> T? {
   match chan.unbounded {
     Some(list) =>
@@ -111,6 +140,7 @@ fn[T] Channel::dequeue_list(chan : Channel[T]) -> T? {
 }
 
 ///|
+/// Enqueue one element into the unbounded list.
 fn[T] Channel::enqueue_list(chan : Channel[T], data : T) -> Unit {
   match chan.unbounded {
     Some(list) => {
@@ -122,6 +152,7 @@ fn[T] Channel::enqueue_list(chan : Channel[T], data : T) -> Unit {
 }
 
 ///|
+/// Dequeue one element from the bounded ring buffer.
 fn[T] Channel::dequeue_buff(chan : Channel[T]) -> T {
   chan.size -= 1
   let data = chan.buffer[chan.recv_index].unwrap()
@@ -134,6 +165,7 @@ fn[T] Channel::dequeue_buff(chan : Channel[T]) -> T {
 }
 
 ///|
+/// Enqueue one element into the bounded ring buffer.
 fn[T] Channel::enqueue_buff(chan : Channel[T], data : T) -> Unit {
   chan.size += 1
   chan.buffer[chan.send_index] = Some(data)
@@ -144,7 +176,9 @@ fn[T] Channel::enqueue_buff(chan : Channel[T], data : T) -> Unit {
 }
 
 ///|
-/// full buffer receive and send
+/// "Receive one, send one" when the buffer is full.
+///
+/// Returns the first element and writes `data` into the current receive slot (last element).
 fn[T] Channel::buff_recv_and_send(chan : Channel[T], data : T) -> T {
   let recv_data = chan.buffer[chan.recv_index].unwrap()
   chan.buffer[chan.recv_index] = Some(data)
@@ -157,6 +191,11 @@ fn[T] Channel::buff_recv_and_send(chan : Channel[T], data : T) -> T {
 }
 
 ///|
+/// Try to receive an element immediately.
+///
+/// - Returns `Ok(data)` if an element is available.
+/// - Returns `Err(Empty)` if no element is available.
+/// - Returns `Err(Closed)` if no element is available and the channel is closed.
 pub fn[T] Channel::try_receive(chan : Channel[T]) -> Result[T, TryRecvError] {
   let d = if chan.capacity == -1 { // unbounded
     chan.dequeue_list()
@@ -191,6 +230,11 @@ pub fn[T] Channel::try_receive(chan : Channel[T]) -> Result[T, TryRecvError] {
 }
 
 ///|
+/// Try to send an element immediately.
+///
+/// - Returns `Ok(())` on success.
+/// - Returns `Err(Full)` if the buffer is full and no receiver is waiting.
+/// - Returns `Err(Closed)` if the channel is already closed.
 pub fn[T] Channel::try_send(
   chan : Channel[T],
   data : T,
@@ -221,6 +265,13 @@ pub fn[T] Channel::try_send(
 }
 
 ///|
+/// Send an element asynchronously.
+///
+/// - If receivers are waiting or the buffer is not full, delivers the element immediately,
+/// unbounded channel will never blocks.
+/// - If the buffer is full and no receiver is waiting on this channel,
+///  suspends until received or closed.
+/// - If the channel is closed, raises `ChannelClosedError`.
 pub async fn[T] Channel::send(
   chan : Channel[T],
   data : T,
@@ -241,6 +292,11 @@ pub async fn[T] Channel::send(
 }
 
 ///|
+/// Receive an element asynchronously.
+///
+/// - If buffer is not empty or senders are waiting, receives the element immediately.
+/// - If buffer is empty and no senders are waiting, suspends until an element is available or closed.
+/// - If the channel is closed and buffer is empty, raises `ChannelClosedError`.
 pub async fn[T] Channel::receive(
   chan : Channel[T],
 ) -> T raise ChannelClosedError {
@@ -259,11 +315,20 @@ pub async fn[T] Channel::receive(
 }
 
 ///|
+/// Check whether the channel is already closed.
 pub fn[T] Channel::is_closed(chan : Channel[T]) -> Bool {
   chan.closed is Some(_)
 }
 
 ///|
+/// Close the channel and wake all pending send/receive coroutines.
+/// 
+/// When closed, all pending send/receive operations will fail, raise `ChannelClosedError`.
+/// Receives can still receive buffered elements after closed, after all buffered elements are received,
+/// `try_receive` will return `Err(Closed)`, `receive` will raise `ChannelClosedError`.
+/// Senders can no longer send after the channel is closed.
+/// 
+/// Repeated close is a no-op.
 pub fn[T] Channel::close(chan : Channel[T]) -> Unit {
   if chan.is_closed() {
     return
