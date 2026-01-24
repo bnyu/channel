@@ -55,11 +55,13 @@ fn[T] LinkList::dequeue(list : LinkList[T]) -> T? {
 }
 
 ///|
+/// for select implementation
 fn[T] LinkList::last(list : LinkList[T]) -> LinkNode[T]? {
   list.tail
 }
 
 ///|
+/// for select implementation
 fn[T] LinkList::remove(list : LinkList[T], node : LinkNode[T]) -> Unit {
   match (node.prev, node.next) {
     (Some(prev), Some(next)) => {

@@ -2,8 +2,8 @@
   "name": "bnyu2/channel",
   "version": "0.1.0",
   "readme": "README.mbt.md",
-  "repository": "",
+  "repository": "https://github.com/bnyu/channel",
   "license": "Apache-2.0",
-  "keywords": [],
+  "keywords": ["channel", "async"],
   "description": ""
 }

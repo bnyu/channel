@@ -8,13 +8,15 @@ fn run_async(f : async () -> Unit noraise) = "%async.run"
 
 ///|
 priv struct RecvWaitCoro[T] {
-  cont : async (T) -> Unit noraise
+  ok_cont : async (T) -> Unit noraise
+  err_cont : (ChannelClosedError) -> Unit
 }
 
 ///|
 priv struct SendWaitCoro[T] {
   item : T
-  cont : async () -> Unit noraise
+  ok_cont : async () -> Unit noraise
+  err_cont : (ChannelClosedError) -> Unit
 }
 
 ///|
@@ -25,27 +27,97 @@ type SendWaitList[T] = LinkList[SendWaitCoro[T]]
 
 ///|
 struct Channel[T] {
+  unbounded : LinkList[T]?
   buffer : Array[T?]
   capacity : Int
   mut size : Int
   mut recv_index : Int
   mut send_index : Int
-  mut closed : Bool
+  mut closed : ChannelClosedError?
   recv_waitlist : RecvWaitList[T]
   send_waitlist : SendWaitList[T]
 }
 
 ///|
-pub fn[T] Channel::new(capacity : Int) -> Channel[T] {
+pub suberror ChannelClosedError derive(Show)
+
+///|
+pub enum TrySendError {
+  Closed(ChannelClosedError)
+  Full
+} derive(Show)
+
+///|
+pub enum TryRecvError {
+  Closed(ChannelClosedError)
+  Empty
+} derive(Show)
+
+///|
+pub fn[T] Channel::new(capacity? : Int = 0) -> Channel[T] {
+  match capacity {
+    -1 => Channel::unbound()
+    n if n >= 0 => Channel::bound(n)
+    _ => panic()
+  }
+}
+
+///|
+pub fn[T] Channel::bound(capacity : Int) -> Channel[T] {
+  if capacity < 0 {
+    panic()
+  }
   {
     buffer: Array::make(capacity, None),
+    unbounded: None,
     capacity,
     size: 0,
     recv_index: 0,
     send_index: 0,
-    closed: false,
+    closed: None,
     recv_waitlist: RecvWaitList::new(),
     send_waitlist: SendWaitList::new(),
+  }
+}
+
+///|
+pub fn[T] Channel::unbound() -> Channel[T] {
+  {
+    buffer: Array::make(0, None),
+    unbounded: Some(LinkList::new()),
+    capacity: -1,
+    size: 0,
+    recv_index: 0,
+    send_index: 0,
+    closed: None,
+    recv_waitlist: RecvWaitList::new(),
+    send_waitlist: SendWaitList::new(),
+  }
+}
+
+///|
+fn[T] Channel::dequeue_list(chan : Channel[T]) -> T? {
+  match chan.unbounded {
+    Some(list) =>
+      match list.dequeue() {
+        Some(v) => {
+          chan.size -= 1
+          Some(v)
+        }
+        None => None
+      }
+    None => None
+  }
+}
+
+///|
+fn[T] Channel::enqueue_list(chan : Channel[T], data : T) -> Unit {
+  match chan.unbounded {
+    Some(list) => {
+      chan.size += 1
+      list.enqueue(data)
+    }
+    None => panic()
   }
 }
 
@@ -72,7 +144,7 @@ fn[T] Channel::enqueue_buff(chan : Channel[T], data : T) -> Unit {
 }
 
 ///|
-/// full buff
+/// full buffer receive and send
 fn[T] Channel::buff_recv_and_send(chan : Channel[T], data : T) -> T {
   let recv_data = chan.buffer[chan.recv_index].unwrap()
   chan.buffer[chan.recv_index] = Some(data)
@@ -85,92 +157,123 @@ fn[T] Channel::buff_recv_and_send(chan : Channel[T], data : T) -> T {
 }
 
 ///|
-fn[T] Channel::try_receive(chan : Channel[T]) -> T? {
-  match chan.send_waitlist.dequeue() {
-    Some(w) => {
-      let mut data = w.item
-      if chan.size > 0 { //full
-        data = chan.buff_recv_and_send(data)
-      }
-      run_async(w.cont)
-      Some(data)
-    }
-    None =>
-      if chan.size > 0 {
-        let data = chan.dequeue_buff()
+pub fn[T] Channel::try_receive(chan : Channel[T]) -> Result[T, TryRecvError] {
+  let d = if chan.capacity == -1 { // unbounded
+    chan.dequeue_list()
+  } else {
+    match chan.send_waitlist.dequeue() {
+      Some(w) => {
+        let mut data = w.item
+        if chan.size > 0 {
+          data = chan.buff_recv_and_send(data)
+        }
+        run_async(w.ok_cont)
         Some(data)
+      }
+      None =>
+        if chan.size > 0 {
+          let data = chan.dequeue_buff()
+          Some(data)
+        } else {
+          None
+        }
+    }
+  }
+  match d {
+    Some(data) => Ok(data)
+    None =>
+      if chan.closed is Some(err) {
+        Err(TryRecvError::Closed(err))
       } else {
-        None
+        Err(TryRecvError::Empty)
       }
   }
 }
 
 ///|
-fn[T] Channel::try_send(chan : Channel[T], data : T) -> Bool {
-  if chan.closed {
-    return false // maybe raise error
+pub fn[T] Channel::try_send(
+  chan : Channel[T],
+  data : T,
+) -> Result[Unit, TrySendError] {
+  if chan.closed is Some(err) {
+    return Err(TrySendError::Closed(err))
   }
   match chan.recv_waitlist.dequeue() {
     Some(w) => {
       let cont = async fn() noraise {
-        let _ = (w.cont)(data)
+        let _ = (w.ok_cont)(data)
         ()
       }
       run_async(cont)
-      true
+      Ok(())
     }
     None =>
-      if chan.size < chan.capacity {
+      if chan.capacity == -1 { // unbounded
+        chan.enqueue_list(data)
+        Ok(())
+      } else if chan.size < chan.capacity {
         chan.enqueue_buff(data)
-        true
+        Ok(())
       } else {
-        false
+        Err(TrySendError::Full)
       }
   }
 }
 
 ///|
-async fn[T] Channel::send(chan : Channel[T], data : T) -> Unit {
-  if chan.is_close() {
-    panic() // todo raise error
+pub async fn[T] Channel::send(
+  chan : Channel[T],
+  data : T,
+) -> Unit raise ChannelClosedError {
+  match chan.try_send(data) {
+    Ok(_) => return
+    Err(TrySendError::Closed(err)) => raise err
+    Err(TrySendError::Full) => ()
   }
-  if chan.try_send(data) {
-    return
-  }
-  async_suspend(fn(ok_cont, _err) {
+  async_suspend(fn(ok_cont, err_cont : (ChannelClosedError) -> Unit) {
     let node = SendWaitCoro::{
       item: data,
-      cont: async fn() noraise { ok_cont(()) },
+      ok_cont: async fn() noraise { ok_cont(()) },
+      err_cont,
     }
     chan.send_waitlist.enqueue(node)
   })
 }
 
 ///|
-async fn[T] Channel::receive(chan : Channel[T]) -> T {
-  let data_opt = chan.try_receive()
-  match data_opt {
-    Some(data) => return data
-    None => ()
+pub async fn[T] Channel::receive(
+  chan : Channel[T],
+) -> T raise ChannelClosedError {
+  match chan.try_receive() {
+    Ok(data) => return data
+    Err(TryRecvError::Closed(err)) => raise err
+    Err(TryRecvError::Empty) => ()
   }
-  if chan.is_close() {
-    panic() // todo raise error
-  }
-  async_suspend(fn(ok_cont, _err) {
+  async_suspend(fn(ok_cont, err_cont : (ChannelClosedError) -> Unit) {
     let node = RecvWaitCoro::{
-      cont: async fn(item : T) noraise { ok_cont(item) },
+      ok_cont: async fn(item : T) noraise { ok_cont(item) },
+      err_cont,
     }
     chan.recv_waitlist.enqueue(node)
   })
 }
 
 ///|
-fn[T] Channel::is_close(chan : Channel[T]) -> Bool {
-  chan.closed
+pub fn[T] Channel::is_closed(chan : Channel[T]) -> Bool {
+  chan.closed is Some(_)
 }
 
 ///|
-fn[T] Channel::close(chan : Channel[T]) -> Unit {
-  chan.closed = true
-  //todo
+pub fn[T] Channel::close(chan : Channel[T]) -> Unit {
+  if chan.is_closed() {
+    return
+  }
+  let err = ChannelClosedError
+  chan.closed = Some(err)
+  while chan.send_waitlist.dequeue() is Some(w) {
+    run_async(async fn() noraise { (w.err_cont)(err) })
+  }
+  while chan.recv_waitlist.dequeue() is Some(w) {
+    run_async(async fn() noraise { (w.err_cont)(err) })
+  }
 }

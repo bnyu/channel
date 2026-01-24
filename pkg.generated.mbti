@@ -1,0 +1,37 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "bnyu2/channel"
+
+// Values
+
+// Errors
+pub suberror ChannelClosedError
+pub impl Show for ChannelClosedError
+
+// Types and methods
+type Channel[T]
+pub fn[T] Channel::bound(Int) -> Self[T]
+pub fn[T] Channel::close(Self[T]) -> Unit
+pub fn[T] Channel::is_closed(Self[T]) -> Bool
+pub fn[T] Channel::new(capacity? : Int) -> Self[T]
+pub async fn[T] Channel::receive(Self[T]) -> T raise ChannelClosedError
+pub async fn[T] Channel::send(Self[T], T) -> Unit raise ChannelClosedError
+pub fn[T] Channel::try_receive(Self[T]) -> Result[T, TryRecvError]
+pub fn[T] Channel::try_send(Self[T], T) -> Result[Unit, TrySendError]
+pub fn[T] Channel::unbound() -> Self[T]
+
+pub enum TryRecvError {
+  Closed(ChannelClosedError)
+  Empty
+}
+pub impl Show for TryRecvError
+
+pub enum TrySendError {
+  Closed(ChannelClosedError)
+  Full
+}
+pub impl Show for TrySendError
+
+// Type aliases
+
+// Traits
+
