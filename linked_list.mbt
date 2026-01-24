@@ -1,7 +1,7 @@
 ///|
-/// A node in a doubly linked list.
+/// A node in a linked list.
 priv struct LinkNode[T] {
-  mut prev : LinkNode[T]? // weak reference? C backend does not have GC
+  // mut prev : LinkNode[T]? // weak reference? C backend does not have GC
   mut next : LinkNode[T]?
   data : T
 }
@@ -9,11 +9,11 @@ priv struct LinkNode[T] {
 ///|
 /// Create a new list node holding `data`.
 fn[T] LinkNode::new(data : T) -> LinkNode[T] {
-  { prev: None, next: None, data }
+  { next: None, data }
 }
 
 ///|
-/// A simple doubly linked list.
+/// A simple linked list.
 priv struct LinkList[T] {
   mut head : LinkNode[T]?
   mut tail : LinkNode[T]?
@@ -32,7 +32,7 @@ fn[T] LinkList::enqueue(list : LinkList[T], data : T) -> Unit {
   let this_node = Some(node)
   match list.tail {
     Some(tail) => {
-      node.prev = list.tail
+      // node.prev = list.tail
       tail.next = this_node
       list.tail = this_node
     }
@@ -50,7 +50,7 @@ fn[T] LinkList::dequeue(list : LinkList[T]) -> T? {
     Some(head) => {
       list.head = head.next
       match list.head {
-        Some(new_head) => new_head.prev = None
+        Some(_) => () // Some(new_head) => new_head.prev = None
         None => list.tail = None
       }
       head.next = None
@@ -60,31 +60,31 @@ fn[T] LinkList::dequeue(list : LinkList[T]) -> T? {
   }
 }
 
-///|
-/// Get the tail node, if any.
-fn[T] LinkList::last(list : LinkList[T]) -> LinkNode[T]? {
-  list.tail
-}
+// ///|
+// /// Get the tail node, if any.
+// fn[T] LinkList::last(list : LinkList[T]) -> LinkNode[T]? {
+//   list.tail
+// }
 
-///|
-/// Remove a specific node from the list.
-fn[T] LinkList::remove(list : LinkList[T], node : LinkNode[T]) -> Unit {
-  match (node.prev, node.next) {
-    (Some(prev), Some(next)) => {
-      prev.next = node.next
-      next.prev = node.prev
-    }
-    (Some(prev), None) => {
-      prev.next = None
-      list.tail = Some(prev)
-    }
-    (None, Some(next)) => {
-      next.prev = None
-      list.head = Some(next)
-    }
-    _ => {
-      list.head = None
-      list.tail = None
-    }
-  }
-}
+// ///|
+// /// Remove a specific node from the list.
+// fn[T] LinkList::remove(list : LinkList[T], node : LinkNode[T]) -> Unit {
+//   match (node.prev, node.next) {
+//     (Some(prev), Some(next)) => {
+//       prev.next = node.next
+//       next.prev = node.prev
+//     }
+//     (Some(prev), None) => {
+//       prev.next = None
+//       list.tail = Some(prev)
+//     }
+//     (None, Some(next)) => {
+//       next.prev = None
+//       list.head = Some(next)
+//     }
+//     _ => {
+//       list.head = None
+//       list.tail = None
+//     }
+//   }
+// }
