@@ -14,6 +14,12 @@ moon run --target native ./examples/bench/main.mbt
 - Go: `go1.25.5 darwin/arm64`
 - MoonBit: `moon 0.1.20260123 (b4c72f8 2026-01-23)`
 
+
+## Result
+
+![benchmark](./bench.png)
+Use log axis
+
 ### Go
 
 limit to one thread
@@ -67,6 +73,9 @@ bounded_spsc      Moonbit Channel           0.204 sec
 
 moonbitlang/async@0.16.2
 ```
+bounded0_mpmc     Moonbit @async/Queue      N/A
+bounded0_mpsc     Moonbit @async/Queue      N/A
+bounded0_spsc     Moonbit @async/Queue      N/A
 bounded1_mpmc     Moonbit @async/Queue      20.339 sec
 bounded1_mpsc     Moonbit @async/Queue      24.419 sec
 bounded1_spsc     Moonbit @async/Queue      40.572 sec
