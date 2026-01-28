@@ -20,7 +20,8 @@ moon add bnyu2/channel
 
 ## Usage
 
-```moonbit
+```moonbit nocheck
+
 ///|
 fn run_async(f : async () -> Unit noraise) = "%async.run"
 
@@ -85,6 +86,9 @@ moon run --target wasm-gc examples/demo
 - `Channel::try_receive()` → `Result[T, TryRecvError]`
 - `Channel::send(data)` / `Channel::receive()` (async)
 - `Channel::close()` / `Channel::is_closed()`
+
+## Benchmark
+[bench result](./examples/bench/README.md)
 
 ## License
 

@@ -1,9 +1,16 @@
 {
   "name": "bnyu2/channel",
-  "version": "0.1.0",
+  "version": "0.1.2",
+  "deps": {
+    "moonbitlang/async": "0.16.2" // benchmarking use
+  },
   "readme": "README.mbt.md",
   "repository": "https://github.com/bnyu/channel",
   "license": "Apache-2.0",
-  "keywords": ["channel", "async"],
+  "keywords": [
+    "channel",
+    "async",
+    "mpmc"
+  ],
   "description": ""
 }
